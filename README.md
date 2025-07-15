@@ -2,6 +2,10 @@
 
 This project implements a machine learning model to predict stock market prices using historical data and technical indicators.
 
+
+<img width="1920" height="871" alt="{81189AAF-34BF-408B-8A13-8EAEA3C7C351}" src="https://github.com/user-attachments/assets/a387ae94-631f-40b3-b8fd-b39549652d72" />
+
+
 ## Prerequisites
 
 - Python 3.8 or higher
