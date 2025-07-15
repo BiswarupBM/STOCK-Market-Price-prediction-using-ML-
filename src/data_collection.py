@@ -1,102 +1,77 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 import ta
 
-class StockDataCollector:
-    def __init__(self, symbol):
-        self.symbol = symbol
-        self.stock = yf.Ticker(symbol)
-
-    def get_historical_data(self, period='1y', interval='15m'):
-        """
-        Fetch historical data and add technical indicators
-        """
-        df = self.stock.history(period=period, interval=interval)
+class MarketDataCollector:
+    def __init__(self, symbol, market_type='stock'):
+        self.symbol = symbol.upper()
+        self.market_type = market_type.lower()
         
-        # Add technical indicators
-        df = self.add_technical_indicators(df)
-        
-        # Clean data
-        df = df.dropna()
-        return df
+        if self.market_type == 'forex':
+            self.formatted_symbol = f"{self.symbol}=X"
+        elif self.market_type == 'crypto':
+            self.formatted_symbol = f"{self.symbol}-USD"
+        else:
+            self.formatted_symbol = self.symbol
+            
+        self.ticker = yf.Ticker(self.formatted_symbol)
 
-    def add_technical_indicators(self, df):
+    def get_historical_data(self, period='5y', interval='1h'):
         """
-        Add technical indicators for better prediction
+        Fetches historical data from Yahoo Finance.
+        
+        Args:
+            period (str): Time period to download ('1d','5d','1mo','3mo','6mo','1y','2y','5y','10y','ytd','max')
+            interval (str): Data interval ('1m','2m','5m','15m','30m','60m','90m','1h','1d','5d','1wk','1mo','3mo')
         """
         try:
-            # Basic Moving Averages (required for visualization)
-            df['SMA_20'] = ta.trend.sma_indicator(df['Close'], window=20)
-            df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
+            # First try with the specified period
+            df = self.ticker.history(period=period, interval=interval, auto_adjust=True)
             
-            # RSI with multiple timeframes
-            df['RSI'] = ta.momentum.rsi(df['Close'])
-            df['RSI_3'] = ta.momentum.rsi(df['Close'], window=3)
-            df['RSI_14'] = ta.momentum.rsi(df['Close'], window=14)
+            # If we don't get enough data, try with a longer period
+            if len(df) < 60:
+                print(f"Insufficient data points ({len(df)}) with period={period}. Attempting with longer period...")
+                df = self.ticker.history(period='max', interval=interval, auto_adjust=True)
             
-            # MACD
-            macd = ta.trend.MACD(df['Close'])
-            df['MACD'] = macd.macd()
-            df['MACD_signal'] = macd.macd_signal()
-            df['MACD_diff'] = macd.macd_diff()
+            if df.empty:
+                print(f"No data available for {self.symbol} with symbol {self.formatted_symbol}")
+                return pd.DataFrame()
             
-            # Bollinger Bands
-            bb = ta.volatility.BollingerBands(df['Close'])
-            df['BB_upper'] = bb.bollinger_hband()
-            df['BB_middle'] = bb.bollinger_mavg()
-            df['BB_lower'] = bb.bollinger_lband()
-            df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['BB_middle']
+            if len(df) < 60:
+                print(f"Warning: Still insufficient data points ({len(df)}) for {self.symbol}. Minimum required: 60")
+                return pd.DataFrame()
             
-            # Additional Moving Averages
-            for window in [5, 8, 13, 21, 34, 55]:  # Fibonacci sequence
-                if window != 20:  # Skip 20 as it's already added
-                    df[f'SMA_{window}'] = ta.trend.sma_indicator(df['Close'], window=window)
-                    df[f'EMA_{window}'] = ta.trend.ema_indicator(df['Close'], window=window)
+            # Filter invalid data
+            df = df[df['Close'] > 0]
+            df = df[df['Volume'] >= 0]
             
-            # Volume indicators
-            df['Volume_EMA'] = ta.trend.ema_indicator(df['Volume'], window=20)
-            df['Volume_SMA'] = ta.trend.sma_indicator(df['Volume'], window=20)
-            df['Volume_VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
-            
-            # Momentum indicators
-            df['MFI'] = ta.volume.money_flow_index(df['High'], df['Low'], df['Close'], df['Volume'])
-            df['ADX'] = ta.trend.adx(df['High'], df['Low'], df['Close'])
-            
-            # Volatility
-            df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'])
-            
-            # Price channels
-            df['Highest_high'] = df['High'].rolling(window=20).max()
-            df['Lowest_low'] = df['Low'].rolling(window=20).min()
-            
-            # Price change features
-            df['Returns'] = df['Close'].pct_change()
-            df['Log_Returns'] = np.log(df['Close']).diff()
-            
-            # Target variable (future returns)
-            df['Target'] = df['Returns'].shift(-1)  # Next period's return
+            print(f"Successfully fetched {len(df)} data points for {self.symbol}")
+            return df
             
         except Exception as e:
-            print(f"Error adding technical indicators: {e}")
-            # Ensure basic indicators are always present even if other calculations fail
-            if 'SMA_20' not in df.columns:
-                df['SMA_20'] = df['Close'].rolling(window=20).mean()
-            if 'EMA_20' not in df.columns:
-                df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-            
-        return df
+            print(f"Error fetching data for {self.symbol}: {e}")
+            return pd.DataFrame()
 
-    def get_live_data(self):
-        """
-        Get the most recent data point
-        """
-        data = self.stock.history(period='1d', interval='1m')
-        if not data.empty:
-            live_data = data.iloc[-1].copy()
-            # Add technical indicators for the live data
-            live_data_df = pd.DataFrame([live_data])
-            live_data_df = self.add_technical_indicators(live_data_df)
-            return live_data_df.iloc[0]
-        return None
+    def add_technical_indicators(self, df):
+        """Adds a suite of technical indicators to the DataFrame."""
+        try:
+            if df.empty or len(df) < 20:
+                return df
+            
+            df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+            macd = ta.trend.MACD(df['Close'])
+            df['MACD'] = macd.macd_diff()
+            bb = ta.volatility.BollingerBands(df['Close'])
+            df['BB_upper'] = bb.bollinger_hband()
+            df['BB_lower'] = bb.bollinger_lband()
+            df['SMA_20'] = ta.trend.sma_indicator(df['Close'], window=20)
+            df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
+            df['Volume_EMA'] = ta.trend.ema_indicator(df['Volume'].astype(float), window=20)
+            
+            # Use ffill() and bfill() to handle NaNs from indicator calculations
+            df = df.ffill().bfill()
+            return df
+        except Exception as e:
+            print(f"Error adding technical indicators: {e}")
+            return df
